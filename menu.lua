@@ -308,6 +308,437 @@ function Update:LoadAnimation()
 	end;
 	return false;
 end;
+
+-- ============================================
+-- SISTEMA DE COMBATE INTEGRADO - AIMBOT + ESP
+-- ============================================
+local CombatSystem = {}
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- Variáveis de controle
+CombatSystem.AimbotEnabled = false
+CombatSystem.AimbotFOV = 150
+CombatSystem.AimbotSmoothness = 0.3
+CombatSystem.AimbotPart = "Head"
+CombatSystem.LockedTarget = nil
+CombatSystem.ESPEnabled = false
+CombatSystem.ESPLines = false
+CombatSystem.ESPBoxes = false
+CombatSystem.ESPHealth = false
+CombatSystem.ESPNames = false
+CombatSystem.ESPMaxDistance = 2000
+CombatSystem.ESPColor = Color3.fromRGB(255, 0, 0)
+CombatSystem.ESPThickness = 1
+
+-- Objetos de desenho
+CombatSystem.ESPObjects = {}
+CombatSystem.FOVCircle = nil
+
+-- Função para verificar inimigo
+local function IsEnemy(player)
+	if player == LocalPlayer then return false end
+	if not LocalPlayer.Team or not player.Team then return true end
+	return player.Team ~= LocalPlayer.Team
+end
+
+-- Criar ESP para jogador
+local function CreateESP(player)
+	if CombatSystem.ESPObjects[player] then return end
+	
+	local espData = {
+		Player = player,
+		Box = Drawing.new("Square"),
+		BoxOutline = Drawing.new("Square"),
+		Line = Drawing.new("Line"),
+		HealthBar = Drawing.new("Square"),
+		HealthBarBG = Drawing.new("Square"),
+		Name = Drawing.new("Text"),
+		Distance = Drawing.new("Text")
+	}
+	
+	-- Configurar Box
+	espData.BoxOutline.Thickness = 3
+	espData.BoxOutline.Filled = false
+	espData.BoxOutline.Color = Color3.fromRGB(0, 0, 0)
+	espData.BoxOutline.Visible = false
+	
+	espData.Box.Thickness = 1
+	espData.Box.Filled = false
+	espData.Box.Color = CombatSystem.ESPColor
+	espData.Box.Visible = false
+	
+	-- Configurar Linha
+	espData.Line.Thickness = 1
+	espData.Line.Color = CombatSystem.ESPColor
+	espData.Line.Visible = false
+	
+	-- Configurar Vida
+	espData.HealthBarBG.Filled = true
+	espData.HealthBarBG.Color = Color3.fromRGB(0, 0, 0)
+	espData.HealthBarBG.Visible = false
+	
+	espData.HealthBar.Filled = true
+	espData.HealthBar.Color = Color3.fromRGB(0, 255, 0)
+	espData.HealthBar.Visible = false
+	
+	-- Configurar Texto
+	espData.Name.Size = 13
+	espData.Name.Center = true
+	espData.Name.Outline = true
+	espData.Name.Color = Color3.fromRGB(255, 255, 255)
+	espData.Name.Visible = false
+	
+	espData.Distance.Size = 12
+	espData.Distance.Center = true
+	espData.Distance.Outline = true
+	espData.Distance.Color = Color3.fromRGB(200, 200, 200)
+	espData.Distance.Visible = false
+	
+	CombatSystem.ESPObjects[player] = espData
+end
+
+-- Remover ESP
+local function RemoveESP(player)
+	local espData = CombatSystem.ESPObjects[player]
+	if espData then
+		for _, obj in pairs(espData) do
+			if typeof(obj) == "Instance" and obj:IsA("Drawing") then
+				obj:Remove()
+			end
+		end
+		CombatSystem.ESPObjects[player] = nil
+	end
+end
+
+-- Atualizar ESP
+local function UpdateESP()
+	for player, espData in pairs(CombatSystem.ESPObjects) do
+		if not player or not player.Parent then
+			RemoveESP(player)
+			continue
+		end
+		
+		local character = player.Character
+		if not character then
+			for _, obj in pairs(espData) do
+				if typeof(obj) == "Instance" and obj:IsA("Drawing") then
+					obj.Visible = false
+				end
+			end
+			continue
+		end
+		
+		local humanoid = character:FindFirstChild("Humanoid")
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		local head = character:FindFirstChild("Head")
+		
+		if not humanoid or not hrp or humanoid.Health <= 0 then
+			for _, obj in pairs(espData) do
+				if typeof(obj) == "Instance" and obj:IsA("Drawing") then
+					obj.Visible = false
+				end
+			end
+			continue
+		end
+		
+		if not IsEnemy(player) then
+			for _, obj in pairs(espData) do
+				if typeof(obj) == "Instance" and obj:IsA("Drawing") then
+					obj.Visible = false
+				end
+			end
+			continue
+		end
+		
+		local headPos, headOnScreen = Camera:WorldToViewportPoint(head.Position)
+		local hrpPos, hrpOnScreen = Camera:WorldToViewportPoint(hrp.Position)
+		local distance = (hrp.Position - Camera.CFrame.Position).Magnitude
+		
+		if not headOnScreen or not hrpOnScreen or distance > CombatSystem.ESPMaxDistance then
+			for _, obj in pairs(espData) do
+				if typeof(obj) == "Instance" and obj:IsA("Drawing") then
+					obj.Visible = false
+				end
+			end
+			continue
+		end
+		
+		-- Calcular tamanho da box
+		local boxHeight = math.abs(headPos.Y - hrpPos.Y) * 1.5
+		local boxWidth = boxHeight * 0.6
+		local boxPos = Vector2.new(hrpPos.X - boxWidth / 2, headPos.Y - boxHeight * 0.2)
+		
+		-- Atualizar Box
+		if CombatSystem.ESPBoxes then
+			espData.BoxOutline.Visible = true
+			espData.BoxOutline.Position = boxPos
+			espData.BoxOutline.Size = Vector2.new(boxWidth, boxHeight)
+			
+			espData.Box.Visible = true
+			espData.Box.Position = boxPos
+			espData.Box.Size = Vector2.new(boxWidth, boxHeight)
+			espData.Box.Color = CombatSystem.ESPColor
+			espData.Box.Thickness = CombatSystem.ESPThickness
+		else
+			espData.Box.Visible = false
+			espData.BoxOutline.Visible = false
+		end
+		
+		-- Atualizar Linha
+		if CombatSystem.ESPLines then
+			local localChar = LocalPlayer.Character
+			local localHRP = localChar and localChar:FindFirstChild("HumanoidRootPart")
+			local startPos = localHRP and Camera:WorldToViewportPoint(localHRP.Position) or Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+			
+			espData.Line.Visible = true
+			espData.Line.Color = CombatSystem.ESPColor
+			espData.Line.Thickness = CombatSystem.ESPThickness
+			espData.Line.From = Vector2.new(startPos.X, startPos.Y)
+			espData.Line.To = Vector2.new(hrpPos.X, hrpPos.Y)
+		else
+			espData.Line.Visible = false
+		end
+		
+		-- Atualizar Vida
+		if CombatSystem.ESPHealth then
+			local healthPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+			local barWidth = 4
+			local barHeight = boxHeight - 2
+			
+			espData.HealthBarBG.Visible = true
+			espData.HealthBarBG.Size = Vector2.new(barWidth, barHeight)
+			espData.HealthBarBG.Position = Vector2.new(boxPos.X - barWidth - 3, boxPos.Y + 1)
+			
+			espData.HealthBar.Visible = true
+			espData.HealthBar.Color = Color3.fromRGB(255 * (1 - healthPercent), 255 * healthPercent, 0)
+			espData.HealthBar.Size = Vector2.new(barWidth - 2, (barHeight - 2) * healthPercent)
+			espData.HealthBar.Position = Vector2.new(boxPos.X - barWidth - 2, boxPos.Y + barHeight - ((barHeight - 2) * healthPercent))
+		else
+			espData.HealthBar.Visible = false
+			espData.HealthBarBG.Visible = false
+		end
+		
+		-- Atualizar Nome e Distância
+		if CombatSystem.ESPNames or CombatSystem.ESPBoxes then
+			espData.Name.Visible = true
+			espData.Name.Text = player.Name
+			espData.Name.Position = Vector2.new(boxPos.X + boxWidth / 2, boxPos.Y - 15)
+			espData.Name.Color = CombatSystem.ESPColor
+			
+			espData.Distance.Visible = true
+			espData.Distance.Text = math.floor(distance) .. "m"
+			espData.Distance.Position = Vector2.new(boxPos.X + boxWidth / 2, boxPos.Y + boxHeight + 2)
+		else
+			espData.Name.Visible = false
+			espData.Distance.Visible = false
+		end
+	end
+end
+
+-- Criar FOV Circle
+CombatSystem.FOVCircle = Drawing.new("Circle")
+CombatSystem.FOVCircle.Thickness = 2
+CombatSystem.FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+CombatSystem.FOVCircle.Transparency = 0.7
+CombatSystem.FOVCircle.Filled = false
+CombatSystem.FOVCircle.NumSides = 64
+CombatSystem.FOVCircle.Visible = false
+
+-- Atualizar FOV no centro
+RunService.RenderStepped:Connect(function()
+	if CombatSystem.AimbotEnabled then
+		CombatSystem.FOVCircle.Visible = true
+		CombatSystem.FOVCircle.Radius = CombatSystem.AimbotFOV
+		CombatSystem.FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	else
+		CombatSystem.FOVCircle.Visible = false
+	end
+end)
+
+-- Função pegar alvo mais próximo do CENTRO
+local function GetClosestPlayerToCenter()
+	local closestPlayer = nil
+	local shortestDistance = CombatSystem.AimbotFOV
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	
+	for _, player in pairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and IsEnemy(player) and player.Character then
+			local targetPart = player.Character:FindFirstChild(CombatSystem.AimbotPart)
+			if targetPart then
+				local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+				if onScreen then
+					local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+					if distance < shortestDistance then
+						local humanoid = player.Character:FindFirstChild("Humanoid")
+						if humanoid and humanoid.Health > 0 then
+							closestPlayer = player
+							shortestDistance = distance
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	return closestPlayer
+end
+
+-- Verificar se alvo é válido
+local function IsTargetValid(target)
+	if not target or not target.Parent then return false end
+	if not target.Character then return false end
+	
+	local humanoid = target.Character:FindFirstChild("Humanoid")
+	local targetPart = target.Character:FindFirstChild(CombatSystem.AimbotPart)
+	
+	if not humanoid or not targetPart then return false end
+	if humanoid.Health <= 0 then return false end
+	
+	local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+	if not onScreen then return false end
+	
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+	
+	if distance > CombatSystem.AimbotFOV * 1.5 then return false end
+	
+	return true
+end
+
+-- Loop do Aimbot com LOCK automático
+RunService.RenderStepped:Connect(function()
+	if not CombatSystem.AimbotEnabled then
+		CombatSystem.LockedTarget = nil
+		CombatSystem.FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+		return
+	end
+	
+	-- Procurar novo alvo se necessário
+	if not IsTargetValid(CombatSystem.LockedTarget) then
+		CombatSystem.LockedTarget = GetClosestPlayerToCenter()
+	end
+	
+	-- Mirar no alvo travado
+	if CombatSystem.LockedTarget and CombatSystem.LockedTarget.Character then
+		local targetPart = CombatSystem.LockedTarget.Character:FindFirstChild(CombatSystem.AimbotPart)
+		if targetPart then
+			local targetPos = targetPart.Position
+			local cameraPos = Camera.CFrame.Position
+			
+			-- Predição simples
+			local humanoid = CombatSystem.LockedTarget.Character:FindFirstChild("Humanoid")
+			if humanoid then
+				targetPos = targetPos + (humanoid.MoveDirection * humanoid.WalkSpeed * 0.1)
+			end
+			
+			local newCFrame = CFrame.new(cameraPos, targetPos)
+			Camera.CFrame = Camera.CFrame:Lerp(newCFrame, CombatSystem.AimbotSmoothness)
+			
+			CombatSystem.FOVCircle.Color = Color3.fromRGB(0, 255, 0) -- Verde quando travado
+		end
+	else
+		CombatSystem.FOVCircle.Color = Color3.fromRGB(255, 255, 255) -- Branco quando não travado
+	end
+end)
+
+-- ESP Loop
+RunService.RenderStepped:Connect(function()
+	if CombatSystem.ESPEnabled then
+		UpdateESP()
+	else
+		for _, espData in pairs(CombatSystem.ESPObjects) do
+			for _, obj in pairs(espData) do
+				if typeof(obj) == "Instance" and obj:IsA("Drawing") then
+					obj.Visible = false
+				end
+			end
+		end
+	end
+end)
+
+-- Criar ESP para jogadores existentes
+for _, player in pairs(Players:GetPlayers()) do
+	if player ~= LocalPlayer then
+		CreateESP(player)
+	end
+end
+
+-- Novos jogadores
+Players.PlayerAdded:Connect(function(player)
+	CreateESP(player)
+end)
+
+-- Remover quando sair
+Players.PlayerRemoving:Connect(function(player)
+	RemoveESP(player)
+end)
+
+-- ============================================
+-- FUNÇÕES PÚBLICAS DO SISTEMA DE COMBATE
+-- ============================================
+function Update:SetAimbot(enabled)
+	CombatSystem.AimbotEnabled = enabled
+	if not enabled then
+		CombatSystem.LockedTarget = nil
+	end
+end
+
+function Update:SetAimbotFOV(value)
+	CombatSystem.AimbotFOV = value
+end
+
+function Update:SetAimbotSmoothness(value)
+	CombatSystem.AimbotSmoothness = value
+end
+
+function Update:SetAimbotPart(part)
+	CombatSystem.AimbotPart = part
+end
+
+function Update:SetESP(enabled)
+	CombatSystem.ESPEnabled = enabled
+end
+
+function Update:SetESPLines(enabled)
+	CombatSystem.ESPLines = enabled
+end
+
+function Update:SetESPBoxes(enabled)
+	CombatSystem.ESPBoxes = enabled
+end
+
+function Update:SetESPHealth(enabled)
+	CombatSystem.ESPHealth = enabled
+end
+
+function Update:SetESPNames(enabled)
+	CombatSystem.ESPNames = enabled
+end
+
+function Update:SetESPMaxDistance(value)
+	CombatSystem.ESPMaxDistance = value
+end
+
+function Update:SetESPColor(color)
+	CombatSystem.ESPColor = color
+	for _, espData in pairs(CombatSystem.ESPObjects) do
+		if espData.Box then espData.Box.Color = color end
+		if espData.Line then espData.Line.Color = color end
+		if espData.Name then espData.Name.Color = color end
+	end
+end
+
+function Update:SetESPThickness(value)
+	CombatSystem.ESPThickness = value
+end
+
+-- ============================================
+-- WINDOW FUNCTION
+-- ============================================
 function Update:Window(Config)
 	assert(Config.SubTitle, "v4");
 	local WindowConfig = {
@@ -901,6 +1332,7 @@ function Update:Window(Config)
 			TextButton.TextXAlignment = Enum.TextXAlignment.Left;
 			TextButton.TextColor3 = Color3.fromRGB(255, 255, 255);
 			TextButton.TextSize = 15;
+			TextButton.AutoButtonColor = false;
 			TextLabel.Name = "TextLabel";
 			TextLabel.Parent = Button;
 			TextLabel.BackgroundColor3 = _G.Primary;
