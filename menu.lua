@@ -322,7 +322,7 @@ local LocalPlayer = Players.LocalPlayer
 -- Variáveis de controle
 CombatSystem.AimbotEnabled = false
 CombatSystem.AimbotFOV = 150
-CombatSystem.AimbotSmoothness = 0.3
+CombatSystem.AimbotSmoothness = 0.5
 CombatSystem.AimbotPart = "Head"
 CombatSystem.LockedTarget = nil
 CombatSystem.ESPEnabled = false
@@ -333,6 +333,7 @@ CombatSystem.ESPNames = false
 CombatSystem.ESPMaxDistance = 2000
 CombatSystem.ESPColor = Color3.fromRGB(255, 0, 0)
 CombatSystem.ESPThickness = 1
+CombatSystem.ESPAlwaysOn = true -- NOVO: ESP sempre visível quando ativado
 
 -- Objetos de desenho
 CombatSystem.ESPObjects = {}
@@ -345,7 +346,9 @@ local function IsEnemy(player)
 	return player.Team ~= LocalPlayer.Team
 end
 
--- Criar ESP para jogador
+-- ============================================
+-- ESP SYSTEM - FIXO NO PLAYER
+-- ============================================
 local function CreateESP(player)
 	if CombatSystem.ESPObjects[player] then return end
 	
@@ -357,7 +360,8 @@ local function CreateESP(player)
 		HealthBar = Drawing.new("Square"),
 		HealthBarBG = Drawing.new("Square"),
 		Name = Drawing.new("Text"),
-		Distance = Drawing.new("Text")
+		Distance = Drawing.new("Text"),
+		Tracer = Drawing.new("Line") -- NOVO: Linha do centro da tela
 	}
 	
 	-- Configurar Box
@@ -371,10 +375,15 @@ local function CreateESP(player)
 	espData.Box.Color = CombatSystem.ESPColor
 	espData.Box.Visible = false
 	
-	-- Configurar Linha
+	-- Configurar Linha do player
 	espData.Line.Thickness = 1
 	espData.Line.Color = CombatSystem.ESPColor
 	espData.Line.Visible = false
+	
+	-- NOVO: Tracer do centro da tela
+	espData.Tracer.Thickness = 1
+	espData.Tracer.Color = CombatSystem.ESPColor
+	espData.Tracer.Visible = false
 	
 	-- Configurar Vida
 	espData.HealthBarBG.Filled = true
@@ -401,7 +410,6 @@ local function CreateESP(player)
 	CombatSystem.ESPObjects[player] = espData
 end
 
--- Remover ESP
 local function RemoveESP(player)
 	local espData = CombatSystem.ESPObjects[player]
 	if espData then
@@ -414,7 +422,7 @@ local function RemoveESP(player)
 	end
 end
 
--- Atualizar ESP
+-- ESP FIXO NO PLAYER - Atualização melhorada
 local function UpdateESP()
 	for player, espData in pairs(CombatSystem.ESPObjects) do
 		if not player or not player.Parent then
@@ -454,11 +462,10 @@ local function UpdateESP()
 			continue
 		end
 		
-		local headPos, headOnScreen = Camera:WorldToViewportPoint(head.Position)
-		local hrpPos, hrpOnScreen = Camera:WorldToViewportPoint(hrp.Position)
 		local distance = (hrp.Position - Camera.CFrame.Position).Magnitude
 		
-		if not headOnScreen or not hrpOnScreen or distance > CombatSystem.ESPMaxDistance then
+		-- Só desativa se estiver muito longe (fora do max distance)
+		if distance > CombatSystem.ESPMaxDistance then
 			for _, obj in pairs(espData) do
 				if typeof(obj) == "Instance" and obj:IsA("Drawing") then
 					obj.Visible = false
@@ -467,12 +474,21 @@ local function UpdateESP()
 			continue
 		end
 		
-		-- Calcular tamanho da box
-		local boxHeight = math.abs(headPos.Y - hrpPos.Y) * 1.5
-		local boxWidth = boxHeight * 0.6
-		local boxPos = Vector2.new(hrpPos.X - boxWidth / 2, headPos.Y - boxHeight * 0.2)
+		-- Calcular posições mesmo se não estiver na tela (para manter fixo)
+		local headPos, headOnScreen = Camera:WorldToViewportPoint(head.Position)
+		local hrpPos, hrpOnScreen = Camera:WorldToViewportPoint(hrp.Position)
 		
-		-- Atualizar Box
+		-- Calcular tamanho da box baseado na distância
+		local boxHeight = math.clamp(math.abs(headPos.Y - hrpPos.Y) * 1.5, 20, 200)
+		local boxWidth = boxHeight * 0.6
+		
+		-- Manter posição fixa no player mesmo se sair da tela
+		local boxPos = Vector2.new(
+			math.clamp(hrpPos.X - boxWidth / 2, 0, Camera.ViewportSize.X),
+			math.clamp(headPos.Y - boxHeight * 0.2, 0, Camera.ViewportSize.Y)
+		)
+		
+		-- Atualizar Box (sempre visível se player estiver vivo)
 		if CombatSystem.ESPBoxes then
 			espData.BoxOutline.Visible = true
 			espData.BoxOutline.Position = boxPos
@@ -488,22 +504,43 @@ local function UpdateESP()
 			espData.BoxOutline.Visible = false
 		end
 		
-		-- Atualizar Linha
+		-- Atualizar Linha do player (sempre visível)
 		if CombatSystem.ESPLines then
 			local localChar = LocalPlayer.Character
 			local localHRP = localChar and localChar:FindFirstChild("HumanoidRootPart")
-			local startPos = localHRP and Camera:WorldToViewportPoint(localHRP.Position) or Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
 			
-			espData.Line.Visible = true
-			espData.Line.Color = CombatSystem.ESPColor
-			espData.Line.Thickness = CombatSystem.ESPThickness
-			espData.Line.From = Vector2.new(startPos.X, startPos.Y)
-			espData.Line.To = Vector2.new(hrpPos.X, hrpPos.Y)
+			if localHRP then
+				local localPos = Camera:WorldToViewportPoint(localHRP.Position)
+				espData.Line.Visible = true
+				espData.Line.Color = CombatSystem.ESPColor
+				espData.Line.Thickness = CombatSystem.ESPThickness
+				espData.Line.From = Vector2.new(localPos.X, localPos.Y)
+				espData.Line.To = Vector2.new(
+					math.clamp(hrpPos.X, 0, Camera.ViewportSize.X),
+					math.clamp(hrpPos.Y, 0, Camera.ViewportSize.Y)
+				)
+			else
+				espData.Line.Visible = false
+			end
 		else
 			espData.Line.Visible = false
 		end
 		
-		-- Atualizar Vida
+		-- NOVO: Tracer do centro da tela até o player
+		if CombatSystem.ESPLines then
+			espData.Tracer.Visible = true
+			espData.Tracer.Color = CombatSystem.ESPColor
+			espData.Tracer.Thickness = CombatSystem.ESPThickness
+			espData.Tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+			espData.Tracer.To = Vector2.new(
+				math.clamp(hrpPos.X, 0, Camera.ViewportSize.X),
+				math.clamp(hrpPos.Y, 0, Camera.ViewportSize.Y)
+			)
+		else
+			espData.Tracer.Visible = false
+		end
+		
+		-- Atualizar Vida (sempre visível)
 		if CombatSystem.ESPHealth then
 			local healthPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
 			local barWidth = 4
@@ -514,7 +551,8 @@ local function UpdateESP()
 			espData.HealthBarBG.Position = Vector2.new(boxPos.X - barWidth - 3, boxPos.Y + 1)
 			
 			espData.HealthBar.Visible = true
-			espData.HealthBar.Color = Color3.fromRGB(255 * (1 - healthPercent), 255 * healthPercent, 0)
+			local healthColor = Color3.fromRGB(255 * (1 - healthPercent), 255 * healthPercent, 0)
+			espData.HealthBar.Color = healthColor
 			espData.HealthBar.Size = Vector2.new(barWidth - 2, (barHeight - 2) * healthPercent)
 			espData.HealthBar.Position = Vector2.new(boxPos.X - barWidth - 2, boxPos.Y + barHeight - ((barHeight - 2) * healthPercent))
 		else
@@ -522,11 +560,11 @@ local function UpdateESP()
 			espData.HealthBarBG.Visible = false
 		end
 		
-		-- Atualizar Nome e Distância
+		-- Atualizar Nome e Distância (sempre visíveis)
 		if CombatSystem.ESPNames or CombatSystem.ESPBoxes then
 			espData.Name.Visible = true
 			espData.Name.Text = player.Name
-			espData.Name.Position = Vector2.new(boxPos.X + boxWidth / 2, boxPos.Y - 15)
+			espData.Name.Position = Vector2.new(boxPos.X + boxWidth / 2, math.max(boxPos.Y - 15, 0))
 			espData.Name.Color = CombatSystem.ESPColor
 			
 			espData.Distance.Visible = true
@@ -559,6 +597,10 @@ RunService.RenderStepped:Connect(function()
 	end
 end)
 
+-- ============================================
+-- AIMBOT COM LOCK FORTE - "GRUDA" NO ALVO
+-- ============================================
+
 -- Função pegar alvo mais próximo do CENTRO
 local function GetClosestPlayerToCenter()
 	local closestPlayer = nil
@@ -570,14 +612,13 @@ local function GetClosestPlayerToCenter()
 			local targetPart = player.Character:FindFirstChild(CombatSystem.AimbotPart)
 			if targetPart then
 				local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-				if onScreen then
-					local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
-					if distance < shortestDistance then
-						local humanoid = player.Character:FindFirstChild("Humanoid")
-						if humanoid and humanoid.Health > 0 then
-							closestPlayer = player
-							shortestDistance = distance
-						end
+				-- Permitir alvos fora da tela se estiverem próximos
+				local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
+				if distance < shortestDistance then
+					local humanoid = player.Character:FindFirstChild("Humanoid")
+					if humanoid and humanoid.Health > 0 then
+						closestPlayer = player
+						shortestDistance = distance
 					end
 				end
 			end
@@ -587,7 +628,7 @@ local function GetClosestPlayerToCenter()
 	return closestPlayer
 end
 
--- Verificar se alvo é válido
+-- Verificar se alvo é válido (mais tolerante)
 local function IsTargetValid(target)
 	if not target or not target.Parent then return false end
 	if not target.Character then return false end
@@ -598,18 +639,18 @@ local function IsTargetValid(target)
 	if not humanoid or not targetPart then return false end
 	if humanoid.Health <= 0 then return false end
 	
-	local pos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
-	if not onScreen then return false end
-	
+	-- Verificar distância do centro (mais tolerante)
+	local pos = Camera:WorldToViewportPoint(targetPart.Position)
 	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 	local distance = (Vector2.new(pos.X, pos.Y) - screenCenter).Magnitude
 	
-	if distance > CombatSystem.AimbotFOV * 1.5 then return false end
+	-- Soltar alvo só se sair muito do FOV (2x o FOV)
+	if distance > CombatSystem.AimbotFOV * 2 then return false end
 	
 	return true
 end
 
--- Loop do Aimbot com LOCK automático
+-- Loop do Aimbot com LOCK FORTE
 RunService.RenderStepped:Connect(function()
 	if not CombatSystem.AimbotEnabled then
 		CombatSystem.LockedTarget = nil
@@ -622,30 +663,44 @@ RunService.RenderStepped:Connect(function()
 		CombatSystem.LockedTarget = GetClosestPlayerToCenter()
 	end
 	
-	-- Mirar no alvo travado
+	-- Mirar no alvo travado com força máxima
 	if CombatSystem.LockedTarget and CombatSystem.LockedTarget.Character then
 		local targetPart = CombatSystem.LockedTarget.Character:FindFirstChild(CombatSystem.AimbotPart)
 		if targetPart then
 			local targetPos = targetPart.Position
 			local cameraPos = Camera.CFrame.Position
 			
-			-- Predição simples
+			-- Predição avançada do movimento
 			local humanoid = CombatSystem.LockedTarget.Character:FindFirstChild("Humanoid")
+			local velocity = CombatSystem.LockedTarget.Character:FindFirstChild("HumanoidRootPart") and CombatSystem.LockedTarget.Character.HumanoidRootPart.Velocity or Vector3.new(0,0,0)
+			
 			if humanoid then
-				targetPos = targetPos + (humanoid.MoveDirection * humanoid.WalkSpeed * 0.1)
+				-- Compensar velocidade do alvo
+				local prediction = velocity * 0.05 * (CombatSystem.AimbotSmoothness + 0.5)
+				targetPos = targetPos + prediction
 			end
 			
+			-- Cálculo da mira com "força de grude"
 			local newCFrame = CFrame.new(cameraPos, targetPos)
-			Camera.CFrame = Camera.CFrame:Lerp(newCFrame, CombatSystem.AimbotSmoothness)
 			
-			CombatSystem.FOVCircle.Color = Color3.fromRGB(0, 255, 0) -- Verde quando travado
+			-- Suavização adaptativa: mais suave quando longe, mais forte quando perto
+			local distance = (targetPos - cameraPos).Magnitude
+			local adaptiveSmoothness = math.clamp(CombatSystem.AimbotSmoothness * (distance / 100), 0.1, 1)
+			
+			-- Aplicar mira com força
+			Camera.CFrame = Camera.CFrame:Lerp(newCFrame, adaptiveSmoothness)
+			
+			-- Indicador visual de lock
+			CombatSystem.FOVCircle.Color = Color3.fromRGB(0, 255, 0)
+			CombatSystem.FOVCircle.Thickness = 3
 		end
 	else
-		CombatSystem.FOVCircle.Color = Color3.fromRGB(255, 255, 255) -- Branco quando não travado
+		CombatSystem.FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+		CombatSystem.FOVCircle.Thickness = 2
 	end
 end)
 
--- ESP Loop
+-- ESP Loop (sempre rodando)
 RunService.RenderStepped:Connect(function()
 	if CombatSystem.ESPEnabled then
 		UpdateESP()
@@ -692,7 +747,8 @@ function Update:SetAimbotFOV(value)
 end
 
 function Update:SetAimbotSmoothness(value)
-	CombatSystem.AimbotSmoothness = value
+	-- Inverter lógica: valor maior = gruda mais (mais suave = mais forte)
+	CombatSystem.AimbotSmoothness = math.clamp(value, 0.1, 1)
 end
 
 function Update:SetAimbotPart(part)
@@ -728,6 +784,7 @@ function Update:SetESPColor(color)
 	for _, espData in pairs(CombatSystem.ESPObjects) do
 		if espData.Box then espData.Box.Color = color end
 		if espData.Line then espData.Line.Color = color end
+		if espData.Tracer then espData.Tracer.Color = color end
 		if espData.Name then espData.Name.Color = color end
 	end
 end
